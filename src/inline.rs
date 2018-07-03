@@ -1,17 +1,37 @@
+use std::mem;
+use std::ptr;
+
 #[derive(Debug)]
 pub struct F {
     x: u32,
     y: u32,
     z: u32,
-    w: u32,
+    w: Option<u32>,
 }
 
 #[derive(Debug)]
 pub struct K(u32);
 
+
+unsafe
+fn convert_from_bytes<T>(slice: &[u8]) -> T {
+    let mut ret: T;
+    unsafe {
+        ret = mem::uninitialized();
+        ptr::copy_nonoverlapping(slice.as_ptr(),
+                                 &mut ret as *mut T as *mut u8,
+                                 mem::size_of::<T>());
+    }
+    ret
+}
+
 trait ConstantSized {
     fn constant_sized(&self) -> bool;
-    fn read(x: u32, result: &mut Self);
+    fn read(x: &[u8], result: &mut Self);
+    fn try_read(x: &[u8], result: &mut Self) -> bool {
+        ConstantSized::read(x, result);
+        true
+    }
     fn size(&self) -> usize;
 }
 
@@ -20,11 +40,18 @@ impl ConstantSized for u32 {
         return true;
     }
     fn size(&self) -> usize {
-       return std::mem::size_of::<Self>() / std::mem::size_of::<u32>()
+       return std::mem::size_of::<Self>()
 
     }
-    fn read(x: u32, result: &mut Self) {
-        *result = x
+    fn read(x: &[u8], result: &mut Self) {
+        *result = unsafe { convert_from_bytes(x) };
+    }
+    fn try_read(x: &[u8], result: &mut Self) -> bool {
+        if x.len() >= std::mem::size_of::<Self>() {
+            *result = unsafe { convert_from_bytes(x) };
+            return true;
+        }
+        return false;
     }
 }
 
@@ -33,20 +60,44 @@ impl ConstantSized for K {
         return false;
     }
     fn size(&self) -> usize {
-        return std::mem::size_of::<Self>() / std::mem::size_of::<u32>()
+        return std::mem::size_of::<Self>()
     }
-    fn read(x: u32, result: &mut Self) {
-         *result = K(x)
+    fn try_read(x: &[u8], result: &mut Self) -> bool {
+        if x.len() >= 4 {
+            *result = K( unsafe { convert_from_bytes(x) });
+            return true;
+        }
+        return false;
+    }
+    fn read(x: &[u8], result: &mut Self) {
+         *result = K( unsafe { convert_from_bytes(x) })
     }
 
 }
 
-impl ConstantSized for Option<u32> {
+impl<T: ConstantSized> ConstantSized for Option<T> {
     fn constant_sized(&self) -> bool {
         return false;
     }
-    fn read(x: u32, result: &mut Self) {
-        *result = Some(x)
+    fn try_read(mut x: &[u8], result: &mut Self) -> bool {
+        if x.len() < 1 {
+            return false;
+        }
+        let some: bool = unsafe { convert_from_bytes(x) };
+        if some {
+            x = &x[1..];
+            let mut t: T = unsafe { mem::uninitialized() };
+            if !ConstantSized::try_read(x, &mut t) {
+                return false;
+            }
+            *result = Some(t);
+        } else {
+            *result = None;
+        }
+        true
+    }
+    fn read(x: &[u8], result: &mut Self) {
+        panic!();
     }
     fn size(&self) -> usize {
         return std::mem::size_of::<Self>()
@@ -54,7 +105,7 @@ impl ConstantSized for Option<u32> {
 }
 
 
-pub fn f(vec: &Vec<u32>, result: &mut F) -> bool {
+pub fn f(vec: &Vec<u8>, result: &mut F) -> bool {
     let x = true;
     let m = || {};
     let mut length = 0;
@@ -67,7 +118,7 @@ pub fn f(vec: &Vec<u32>, result: &mut F) -> bool {
 
     let mut s = &vec[..];
     {
-    let previous_reads = |s: &[u32]| { return true };
+    let previous_reads = |s: &[u8]| { return true };
 
     let cs = fx.constant_sized();
     if cs {
@@ -79,13 +130,13 @@ pub fn f(vec: &Vec<u32>, result: &mut F) -> bool {
         previous_reads(s);
         s = &s[length..];
         length = 0;
-        ConstantSized::read(unsafe { *s.get_unchecked(0) }, fx);
+        ConstantSized::try_read(&s[0..], fx);
     }
     let captured_length = length;
-    let mut new_read = |s: &[u32]| {
+    let mut new_read = |s: &[u8]| {
         if cs {
             if !previous_reads(s) { return false }
-            ConstantSized::read(unsafe { *s.get_unchecked(captured_length - 1) }, fx);
+            ConstantSized::read(&s[captured_length - 1..], fx);
             return true;
         }
         return true;
@@ -102,13 +153,13 @@ pub fn f(vec: &Vec<u32>, result: &mut F) -> bool {
         previous_reads(s);
         s = &s[length..];
         length = 0;
-        ConstantSized::read(unsafe { *s.get_unchecked(0) }, fy);
+        ConstantSized::try_read(&s[0..], fy);
     }
     let captured_length = length;
-    let mut new_read = |s: &[u32]| {
+    let mut new_read = |s: &[u8]| {
         if cs {
             if !previous_reads(s) { return false }
-            ConstantSized::read(unsafe { *s.get_unchecked(captured_length - 1) }, fy);
+            ConstantSized::read(&s[captured_length - 1..], fy);
             return true;
         }
         return true;
@@ -125,13 +176,13 @@ pub fn f(vec: &Vec<u32>, result: &mut F) -> bool {
         previous_reads(s);
         s = &s[length..];
         length = 0;
-        ConstantSized::read(unsafe { *s.get_unchecked(0) }, fz);
+        ConstantSized::try_read(&s[0..], fz);
     }
     let captured_length = length;
-    let mut new_read = |s: &[u32]| {
+    let mut new_read = |s: &[u8]| {
         if cs {
             if !previous_reads(s) { return false }
-            ConstantSized::read(unsafe { *s.get_unchecked(captured_length - 1) }, fz);
+            ConstantSized::read(&s[captured_length - 1..], fz);
             return true;
         }
         return true;
@@ -149,13 +200,13 @@ pub fn f(vec: &Vec<u32>, result: &mut F) -> bool {
         previous_reads(s);
         s = &s[length..];
         length = 0;
-        ConstantSized::read(unsafe { *s.get_unchecked(0) }, fw);
+        ConstantSized::try_read(&s[0..], fw);
     }
     let captured_length = length;
-    let mut new_read = |s: &[u32]| {
+    let mut new_read = |s: &[u8]| {
         if cs {
             if !previous_reads(s) { return false }
-            ConstantSized::read(unsafe { *s.get_unchecked(captured_length - 1) }, fw);
+            ConstantSized::read(&s[captured_length - 1..], fw);
             return true;
         }
         return true;
